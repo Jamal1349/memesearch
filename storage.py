@@ -26,7 +26,7 @@ def save_json_file(path: str, data: Any) -> None:
 class BotStorage:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.blocked_users_path = os.path.join(config.base_dir, "blocked_users.json")
+        self.blocked_users_path = os.path.join(config.data_dir, "blocked_users.json")
         self.favorites = load_json_file(config.favorites_path, {})
         self.file_id_cache = load_json_file(config.file_ids_path, {})
         self.blocked_users = set(load_json_file(self.blocked_users_path, []))

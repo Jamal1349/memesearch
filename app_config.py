@@ -17,6 +17,7 @@ class AppConfig:
     token: str
     cache_chat_id: Optional[int]
     base_dir: str
+    data_dir: str
     dataset_path: str
     dataset_name: str
     dataset_split: str
@@ -62,6 +63,8 @@ def load_config() -> AppConfig:
         admin_user_ids = frozenset(int(x) for x in admin_env.split(",") if x.strip())
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.getenv("APP_DATA_DIR", base_dir)
+    os.makedirs(data_dir, exist_ok=True)
     default_dataset_path = os.path.join(base_dir, "meme_enriched")
     if not os.path.exists(default_dataset_path):
         default_dataset_path = os.path.join(base_dir, "dataset_splits")
@@ -79,10 +82,14 @@ def load_config() -> AppConfig:
         ]
         finetuned_dir = next((path for path in finetuned_candidates if os.path.exists(path)), None)
         clip_model_path = finetuned_dir or os.getenv("CLIP_BASE_MODEL", DEFAULT_CLIP_BASE_MODEL)
+    clip_index_path = os.getenv("CLIP_INDEX_PATH", os.path.join(base_dir, "clip.index"))
+    clip_meta_path = os.getenv("CLIP_META_PATH", os.path.join(base_dir, "clip_meta.npy"))
+
     return AppConfig(
         token=token,
         cache_chat_id=cache_chat_id,
         base_dir=base_dir,
+        data_dir=data_dir,
         dataset_path=dataset_path,
         dataset_name=dataset_name,
         dataset_split=dataset_split,
@@ -90,12 +97,12 @@ def load_config() -> AppConfig:
         min_clip_score=min_clip_score,
         min_clip_rerank_score=min_clip_rerank_score,
         clip_model_path=clip_model_path,
-        clip_index_path=os.path.join(base_dir, "clip.index"),
-        clip_meta_path=os.path.join(base_dir, "clip_meta.npy"),
-        file_ids_path=os.path.join(base_dir, "file_ids.json"),
-        favorites_path=os.path.join(base_dir, "favorites.json"),
-        warmup_state_path=os.path.join(base_dir, "warmup_state.json"),
-        local_memes_path=os.path.join(base_dir, "local_memes.json"),
-        local_images_dir=os.path.join(base_dir, "local_memes"),
+        clip_index_path=clip_index_path,
+        clip_meta_path=clip_meta_path,
+        file_ids_path=os.path.join(data_dir, "file_ids.json"),
+        favorites_path=os.path.join(data_dir, "favorites.json"),
+        warmup_state_path=os.path.join(data_dir, "warmup_state.json"),
+        local_memes_path=os.path.join(data_dir, "local_memes.json"),
+        local_images_dir=os.path.join(data_dir, "local_memes"),
         admin_user_ids=admin_user_ids,
     )

@@ -58,6 +58,8 @@ file_ids.json
 favorites.json
 warmup_state.json
 local_memes.json
+data/
+artifacts/
 
 # Local uploaded images
 local_memes/
