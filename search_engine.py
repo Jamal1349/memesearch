@@ -3,7 +3,9 @@ import os
 import re
 from collections import Counter
 from functools import lru_cache
+from typing import Any
 from typing import Optional
+import hashlib
 import faiss
 import numpy as np
 from CLIP import STClipVectorizer
@@ -174,8 +176,7 @@ class SearchEngine:
         self.clip_meta = None
         self.df = None
         self.bm25_index = None
-        self.query_token_store: dict[str, str] = {}
-        self.user_query_history: dict[int, dict[str, list[int]]] = {}
+        self.search_sessions: dict[str, dict[str, Any]] = {}
         self._load()
 
     def _load(self) -> None:
@@ -355,39 +356,50 @@ class SearchEngine:
             return []
         return [int(idx) for idx in local_df.tail(max(limit, 0)).index.tolist()[::-1]]
 
-    def store_query_token(self, query: str) -> str:
-        import hashlib
+    def _new_search_token(self, user_id: int, query: str) -> str:
+        seed = f"{user_id}:{query}:{len(self.search_sessions)}".encode("utf-8")
+        return hashlib.sha1(seed).hexdigest()[:16]
 
-        token = hashlib.sha1(query.encode("utf-8")).hexdigest()[:16]
-        self.query_token_store[token] = query
-        if len(self.query_token_store) > self.config.query_token_limit:
-            oldest_token = next(iter(self.query_token_store))
-            self.query_token_store.pop(oldest_token, None)
-        return token
+    def _trim_search_sessions(self) -> None:
+        while len(self.search_sessions) > self.config.query_token_limit:
+            oldest_token = next(iter(self.search_sessions))
+            self.search_sessions.pop(oldest_token, None)
 
-    def resolve_query_token(self, token: str) -> str:
-        return self.query_token_store.get(token, "")
+    def start_search_session(self, query: str, user_id: int, page_size: int = 5) -> tuple[str, list[int], bool]:
+        session_limit = max(page_size * self.config.query_history_max_queries, self.config.query_history_max_results)
+        ranked_results = self.search(query, limit=session_limit)
+        token = self._new_search_token(user_id, query)
+        self.search_sessions[token] = {
+            "user_id": user_id,
+            "query": query,
+            "results": ranked_results,
+            "cursor": 0,
+        }
+        self._trim_search_sessions()
+        batch = self.next_search_results(token, user_id, page_size)
+        return token, batch, self.search_session_has_more(token)
 
-    def get_shown_results(self, user_id: int, query_key: str) -> list[int]:
-        return list(self.user_query_history.get(user_id, {}).get(query_key, []))
+    def next_search_results(self, token: str, user_id: int, page_size: int = 5) -> list[int]:
+        session = self.search_sessions.get(token)
+        if not session:
+            return []
+        if int(session.get("user_id", -1)) != user_id:
+            return []
+        results = list(session.get("results", []))
+        cursor = int(session.get("cursor", 0))
+        batch = results[cursor : cursor + page_size]
+        session["cursor"] = cursor + len(batch)
+        return batch
 
-    def remember_user_results(self, user_id: int, query_key: str, new_items: list[int]) -> None:
-        user_history = self.user_query_history.setdefault(user_id, {})
-        merged = list(user_history.get(query_key, []))
-        seen = set(merged)
-        for item in new_items:
-            if item not in seen:
-                merged.append(item)
-                seen.add(item)
-        user_history[query_key] = merged[-self.config.query_history_max_results :]
+    def search_session_has_more(self, token: str) -> bool:
+        session = self.search_sessions.get(token)
+        if not session:
+            return False
+        results = list(session.get("results", []))
+        cursor = int(session.get("cursor", 0))
+        return cursor < len(results)
 
-        while len(user_history) > self.config.query_history_max_queries:
-            oldest_query = next(iter(user_history))
-            if oldest_query == query_key and len(user_history) == 1:
-                break
-            user_history.pop(oldest_query, None)
-
-    def search_keyword(self, query: str, user_id: int, limit: int = 10) -> list[int]:
+    def search_keyword(self, query: str, limit: int = 10) -> list[int]:
         if self.df is None or self.bm25_index is None:
             return []
         query_key = history_query_key(query)
@@ -409,14 +421,13 @@ class SearchEngine:
             )
             return []
 
-        shown = set(self.get_shown_results(user_id, query_key))
         return [
             idx
             for idx, score in scored_candidates
-            if score >= self.config.min_bm25_score and idx not in shown
+            if score >= self.config.min_bm25_score
         ][:limit]
 
-    def search_clip(self, query: str, user_id: int, limit: int = 10) -> list[int]:
+    def search_clip(self, query: str, limit: int = 10) -> list[int]:
         if self.clip_index is None or self.clip_vec is None:
             return []
 
@@ -454,14 +465,11 @@ class SearchEngine:
             )
             return []
 
-        query_key = history_query_key(query_text)
-        shown = set(self.get_shown_results(user_id, query_key))
         out: list[int] = []
         for idx, score in ranked_candidates:
             if score < self.config.min_clip_score:
                 continue
-            if idx not in shown:
-                out.append(idx)
+            out.append(idx)
             if len(out) >= limit:
                 break
         return out
@@ -518,12 +526,10 @@ class SearchEngine:
                     break
         return out
 
-    def search(self, query: str, user_id: int, limit: int = 10) -> list[int]:
-        query_key = history_query_key(query)
-        lexical = self.search_keyword(query, user_id, limit=250)
+    def search(self, query: str, user_id: int | None = None, limit: int = 10) -> list[int]:
+        lexical = self.search_keyword(query, limit=max(limit, 250))
         if lexical:
             results = self.rerank_clip_over_candidates(query, lexical, topk=limit)
         else:
-            results = self.search_clip(query, user_id, limit=limit)
-        self.remember_user_results(user_id, query_key, results)
+            results = self.search_clip(query, limit=limit)
         return results

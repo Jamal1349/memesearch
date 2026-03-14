@@ -22,7 +22,7 @@ from keyboards import (
     setup_main_menu,
 )
 from media_utils import create_input_file
-from search_engine import SearchEngine, normalize_query_key
+from search_engine import SearchEngine
 from storage import BotStorage
 
 
@@ -196,14 +196,19 @@ async def warmup_cache(chat_id_for_updates: int) -> None:
     await bot.send_message(chat_id_for_updates, f"Warmup завершен. ok={ok}, fail={fail}, total={total}")
 
 
-async def send_meme(chat_id: int, idx: int, query: str = "", caption: Optional[str] = None) -> None:
+async def send_meme(
+    chat_id: int,
+    idx: int,
+    search_session_token: str = "",
+    caption: Optional[str] = None,
+) -> None:
     row = search_engine.row(idx)
     input_file = create_input_file(row)
     sent = await bot.send_photo(
         chat_id=chat_id,
         photo=input_file,
         caption=caption,
-        reply_markup=create_meme_keyboard(search_engine, idx, query),
+        reply_markup=create_meme_keyboard(search_engine, idx, search_session_token),
     )
     await cache_sent_photo(idx, sent)
 
@@ -235,25 +240,35 @@ async def send_random_meme(chat_id: int, user_id: int) -> None:
         await bot.send_message(chat_id, "Ошибка при загрузке мема")
 
 
-async def perform_search(chat_id: int, query: str, user_id: int) -> None:
+async def perform_search(chat_id: int, query: str, user_id: int, search_session_token: str = "") -> None:
     try:
-        meme_indices = await asyncio.to_thread(search_engine.search, query, user_id, 5)
+        if search_session_token:
+            meme_indices = await asyncio.to_thread(search_engine.next_search_results, search_session_token, user_id, 5)
+            has_more = search_engine.search_session_has_more(search_session_token)
+        else:
+            search_session_token, meme_indices, has_more = await asyncio.to_thread(
+                search_engine.start_search_session,
+                query,
+                user_id,
+                5,
+            )
+
         if not meme_indices:
-            shown = search_engine.get_shown_results(user_id, normalize_query_key(query))
-            if shown:
+            if search_session_token:
                 await bot.send_message(chat_id, "Больше мемов по этому запросу нет")
             else:
                 await bot.send_message(chat_id, f"По запросу «{query}» ничего не найдено")
             return
 
         idx = meme_indices[0]
-        await send_meme(chat_id, idx, query=query)
+        await send_meme(chat_id, idx, search_session_token=search_session_token if has_more else "")
 
-        if len(meme_indices) > 1:
+        if has_more:
             await bot.send_message(chat_id, "Нажми «Еще по этому запросу», чтобы увидеть больше мемов")
     except Exception:
         logger.exception("Ошибка поиска")
         await bot.send_message(chat_id, "Ошибка при поиске мемов")
+
 
 
 @dp.message(CommandStart())
@@ -567,7 +582,7 @@ async def inline_search(inline_query: types.InlineQuery) -> None:
             logger.exception("Не удалось получить имя бота")
             BOT_USERNAME = None
 
-    meme_indices = await asyncio.to_thread(search_engine.search, query, user_id, config.inline_limit)
+    meme_indices = await asyncio.to_thread(search_engine.search, query, limit=config.inline_limit)
     results = []
 
     for idx in meme_indices:
@@ -626,12 +641,13 @@ async def handle_callbacks(callback: types.CallbackQuery) -> None:
             await callback.answer()
             await cmd_start(callback.message)
         elif data.startswith("more:"):
-            query = search_engine.resolve_query_token(data[5:])
-            if not query:
+            search_session_token = data[5:]
+            if not search_session_token:
                 await callback.answer("Запрос устарел, отправь его заново")
                 return
             await callback.answer("Ищу еще мемы...")
-            await perform_search(callback.message.chat.id, query, user_id)
+            await perform_search(callback.message.chat.id, "", user_id, search_session_token=search_session_token)
+
         elif data.startswith("fav:"):
             meme_idx = int(data[4:])
             if storage.add_favorite(user_id, meme_idx):
