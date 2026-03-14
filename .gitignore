@@ -1,0 +1,68 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Model artifacts and indexes
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.npy
+*.faiss
+clip.index
+clip_meta.npy
+clip_index_info.json
+clip_build.log
+
+# Large archives
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Runtime bot state
+file_ids.json
+favorites.json
+warmup_state.json
+local_memes.json
+
+# Local uploaded images
+local_memes/
+
+# Datasets and generated corpora
+dataset/
+dataset_splits/
+meme_enriched/
+ocr_texts.json

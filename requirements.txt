@@ -1,0 +1,14 @@
+aiogram>=3.13,<4
+python-dotenv>=1.0,<2
+numpy>=1.26,<3
+pandas>=2.2,<3
+datasets>=2.20,<4
+transformers>=4.45,<5
+torch>=2.4,<3
+faiss-cpu>=1.8,<2
+Pillow>=10,<12
+tqdm>=4.66,<5
+pymorphy3>=2.0,<3
+pytesseract>=0.3.10,<0.4
+sentence-transformers>=3.0,<4
+open_clip_torch>=3.3,<4
