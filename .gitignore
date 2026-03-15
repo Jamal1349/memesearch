@@ -2,7 +2,7 @@
 .env
 .env.*
 !.env.example
-
+blocked_users.json
 govno/
 # Python cache/build
 __pycache__/
