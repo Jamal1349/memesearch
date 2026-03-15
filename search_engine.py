@@ -399,6 +399,12 @@ class SearchEngine:
         cursor = int(session.get("cursor", 0))
         return cursor < len(results)
 
+    def search_session_query(self, token: str) -> str:
+        session = self.search_sessions.get(token)
+        if not session:
+            return ""
+        return str(session.get("query") or "")
+
     def search_keyword(self, query: str, limit: int = 10) -> list[int]:
         if self.df is None or self.bm25_index is None:
             return []

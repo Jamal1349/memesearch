@@ -232,10 +232,16 @@ class STClipVectorizer:
 
         arch = os.getenv("OPENCLIP_ARCH", DEFAULT_OPENCLIP_ARCH)
         pretrained = os.getenv("OPENCLIP_PRETRAINED", DEFAULT_OPENCLIP_PRETRAINED)
-        self.model, _, self.openclip_preprocess = open_clip.create_model_and_transforms(
-            arch,
-            pretrained=pretrained,
-        )
+        try:
+            self.model, _, self.openclip_preprocess = open_clip.create_model_and_transforms(
+                arch,
+                pretrained=None,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to initialize OpenCLIP architecture '{arch}' for local checkpoint '{checkpoint_path}'. "
+                "Set OPENCLIP_ARCH to the architecture used during training."
+            ) from exc
         self.openclip_tokenizer = open_clip.get_tokenizer(arch)
         self.model = self.model.to(self.device)
 
@@ -252,6 +258,15 @@ class STClipVectorizer:
                 cleaned_state_dict[key] = value
             state_dict = cleaned_state_dict
 
-        self.model.load_state_dict(state_dict, strict=False)
+        incompatible = self.model.load_state_dict(state_dict, strict=False)
+        missing_keys = getattr(incompatible, "missing_keys", [])
+        unexpected_keys = getattr(incompatible, "unexpected_keys", [])
+        if missing_keys and unexpected_keys:
+            raise RuntimeError(
+                f"Checkpoint '{checkpoint_path}' is incompatible with OPENCLIP_ARCH='{arch}'. "
+                f"Missing keys: {len(missing_keys)}, unexpected keys: {len(unexpected_keys)}. "
+                f"If this checkpoint expects pretrained base weights, set OPENCLIP_PRETRAINED='{pretrained}' "
+                "and ensure those weights are available locally."
+            )
         self.model_type = "open_clip"
         self.model.eval()

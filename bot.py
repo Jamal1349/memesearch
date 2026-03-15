@@ -2,6 +2,7 @@ import asyncio
 import html
 import os
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 from aiogram import Bot, Dispatcher, types
@@ -200,6 +201,7 @@ async def send_meme(
     chat_id: int,
     idx: int,
     search_session_token: str = "",
+    has_more: bool = False,
     caption: Optional[str] = None,
 ) -> None:
     row = search_engine.row(idx)
@@ -208,9 +210,46 @@ async def send_meme(
         chat_id=chat_id,
         photo=input_file,
         caption=caption,
-        reply_markup=create_meme_keyboard(search_engine, idx, search_session_token),
+        reply_markup=create_meme_keyboard(search_engine, idx, search_session_token, has_more=has_more),
     )
     await cache_sent_photo(idx, sent)
+
+
+def build_meme_log_payload(idx: int) -> dict:
+    row = search_engine.row(idx)
+    image_info = row.get("image", {})
+    payload = {
+        "meme_idx": int(idx),
+        "title": search_engine.title_for_idx(idx),
+    }
+    if isinstance(image_info, dict):
+        image_path = image_info.get("path")
+        if image_path:
+            payload["image_path"] = str(image_path)
+    file_id = storage.get_file_id(idx)
+    if file_id:
+        payload["file_id"] = file_id
+    return payload
+
+
+def log_user_selection(
+    *,
+    event_type: str,
+    user_id: int,
+    query: str,
+    idx: int,
+    chat_id: int | None = None,
+) -> None:
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event_type": event_type,
+        "user_id": int(user_id),
+        "query": (query or "").strip(),
+        "selected_image": build_meme_log_payload(idx),
+    }
+    if chat_id is not None:
+        record["chat_id"] = int(chat_id)
+    storage.append_interaction_log(record)
 
 
 async def show_favorite_meme(chat_id: int, user_id: int, page: int = 0) -> None:
@@ -261,7 +300,7 @@ async def perform_search(chat_id: int, query: str, user_id: int, search_session_
             return
 
         idx = meme_indices[0]
-        await send_meme(chat_id, idx, search_session_token=search_session_token if has_more else "")
+        await send_meme(chat_id, idx, search_session_token=search_session_token, has_more=has_more)
 
         if has_more:
             await bot.send_message(chat_id, "Нажми «Еще по этому запросу», чтобы увидеть больше мемов")
@@ -619,6 +658,28 @@ async def inline_search(inline_query: types.InlineQuery) -> None:
     await inline_query.answer(results, cache_time=config.inline_cache_time, is_personal=True)
 
 
+@dp.chosen_inline_result()
+async def handle_chosen_inline_result(chosen_result: types.ChosenInlineResult) -> None:
+    result_id = chosen_result.result_id or ""
+    if "_" not in result_id:
+        return
+    try:
+        idx = int(result_id.rsplit("_", maxsplit=1)[1])
+    except ValueError:
+        return
+
+    try:
+        await asyncio.to_thread(
+            log_user_selection,
+            event_type="inline_chosen",
+            user_id=chosen_result.from_user.id,
+            query=(chosen_result.query or "").strip(),
+            idx=idx,
+        )
+    except Exception:
+        logger.exception("Не удалось сохранить лог inline-выбора")
+
+
 @dp.callback_query()
 async def handle_callbacks(callback: types.CallbackQuery) -> None:
     if is_blocked(callback.from_user.id):
@@ -649,8 +710,19 @@ async def handle_callbacks(callback: types.CallbackQuery) -> None:
             await perform_search(callback.message.chat.id, "", user_id, search_session_token=search_session_token)
 
         elif data.startswith("fav:"):
-            meme_idx = int(data[4:])
+            parts = data.split(":", maxsplit=2)
+            meme_idx = int(parts[1])
+            search_session_token = parts[2] if len(parts) > 2 else ""
             if storage.add_favorite(user_id, meme_idx):
+                query = search_engine.search_session_query(search_session_token)
+                await asyncio.to_thread(
+                    log_user_selection,
+                    event_type="favorite_selected",
+                    user_id=user_id,
+                    chat_id=callback.message.chat.id,
+                    query=query,
+                    idx=meme_idx,
+                )
                 await callback.answer("Добавлено в избранное")
             else:
                 await callback.answer("Уже в избранном")
@@ -711,5 +783,4 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
 

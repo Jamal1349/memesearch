@@ -8,11 +8,12 @@ def create_meme_keyboard(
     search_engine: SearchEngine,
     meme_idx: int,
     search_session_token: str = "",
+    has_more: bool = False,
 ) -> types.InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    if search_session_token:
+    if search_session_token and has_more:
         kb.button(text="Еще по этому запросу", callback_data=f"more:{search_session_token}")
-    kb.button(text="В избранное", callback_data=f"fav:{meme_idx}")
+    kb.button(text="В избранное", callback_data=f"fav:{meme_idx}:{search_session_token}")
     kb.button(text="Случайный мем", callback_data="random")
     kb.button(text="В меню", callback_data="menu")
     kb.adjust(1, 2, 1)

@@ -23,6 +23,13 @@ def save_json_file(path: str, data: Any) -> None:
     os.replace(temp_path, path)
 
 
+def append_jsonl_file(path: str, record: dict[str, Any]) -> None:
+    dir_name = os.path.dirname(path) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 class BotStorage:
     def __init__(self, config: AppConfig):
         self.config = config
@@ -56,6 +63,9 @@ class BotStorage:
 
     def save_favorites(self) -> None:
         save_json_file(self.config.favorites_path, self.favorites)
+
+    def append_interaction_log(self, record: dict[str, Any]) -> None:
+        append_jsonl_file(self.config.interaction_logs_path, record)
 
     def get_file_id(self, meme_idx: int) -> str | None:
         return self.file_id_cache.get(str(meme_idx))

@@ -26,6 +26,7 @@ class AppConfig:
     clip_meta_path: str
     file_ids_path: str
     favorites_path: str
+    interaction_logs_path: str
     warmup_state_path: str
     local_memes_path: str
     local_images_dir: str
@@ -41,10 +42,17 @@ class AppConfig:
 
 
 def configure_logging() -> logging.Logger:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.getenv("APP_DATA_DIR", base_dir)
+    os.makedirs(data_dir, exist_ok=True)
+    log_path = os.path.join(data_dir, "logs.log")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler()],
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
     )
     return logging.getLogger("memebot")
 
@@ -101,6 +109,7 @@ def load_config() -> AppConfig:
         clip_meta_path=clip_meta_path,
         file_ids_path=os.path.join(data_dir, "file_ids.json"),
         favorites_path=os.path.join(data_dir, "favorites.json"),
+        interaction_logs_path=os.path.join(data_dir, "interaction_logs.jsonl"),
         warmup_state_path=os.path.join(data_dir, "warmup_state.json"),
         local_memes_path=os.path.join(data_dir, "local_memes.json"),
         local_images_dir=os.path.join(data_dir, "local_memes"),
