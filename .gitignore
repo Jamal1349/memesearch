@@ -4,6 +4,9 @@
 !.env.example
 blocked_users.json
 govno/
+clip_finetuned/
+file_ids.json.bak
+interaction_logs.jsonl
 # Python cache/build
 __pycache__/
 *.py[cod]

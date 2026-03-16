@@ -232,23 +232,27 @@ def build_meme_log_payload(idx: int) -> dict:
     return payload
 
 
-def log_user_selection(
+def log_interaction_event(
     *,
     event_type: str,
     user_id: int,
-    query: str,
-    idx: int,
+    query: str = "",
     chat_id: int | None = None,
+    idx: int | None = None,
+    results: list[dict] | None = None,
 ) -> None:
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "event_type": event_type,
         "user_id": int(user_id),
         "query": (query or "").strip(),
-        "selected_image": build_meme_log_payload(idx),
     }
     if chat_id is not None:
         record["chat_id"] = int(chat_id)
+    if idx is not None:
+        record["selected_image"] = build_meme_log_payload(idx)
+    if results is not None:
+        record["results"] = results
     storage.append_interaction_log(record)
 
 
@@ -281,9 +285,11 @@ async def send_random_meme(chat_id: int, user_id: int) -> None:
 
 async def perform_search(chat_id: int, query: str, user_id: int, search_session_token: str = "") -> None:
     try:
+        effective_query = (query or "").strip()
         if search_session_token:
             meme_indices = await asyncio.to_thread(search_engine.next_search_results, search_session_token, user_id, 1)
             has_more = search_engine.search_session_has_more(search_session_token)
+            effective_query = search_engine.search_session_query(search_session_token)
         else:
             search_session_token, meme_indices, has_more = await asyncio.to_thread(
                 search_engine.start_search_session,
@@ -293,6 +299,13 @@ async def perform_search(chat_id: int, query: str, user_id: int, search_session_
             )
 
         if not meme_indices:
+            await asyncio.to_thread(
+                log_interaction_event,
+                event_type="chat_search_no_results",
+                user_id=user_id,
+                chat_id=chat_id,
+                query=effective_query,
+            )
             if search_session_token:
                 await bot.send_message(chat_id, "Больше мемов по этому запросу нет")
             else:
@@ -300,6 +313,15 @@ async def perform_search(chat_id: int, query: str, user_id: int, search_session_
             return
 
         idx = meme_indices[0]
+        await asyncio.to_thread(
+            log_interaction_event,
+            event_type="chat_search_result_served",
+            user_id=user_id,
+            chat_id=chat_id,
+            query=effective_query,
+            idx=idx,
+            results=[build_meme_log_payload(meme_idx) for meme_idx in meme_indices],
+        )
         await send_meme(chat_id, idx, search_session_token=search_session_token, has_more=has_more)
 
         if has_more:
@@ -623,9 +645,15 @@ async def inline_search(inline_query: types.InlineQuery) -> None:
 
     meme_indices = await asyncio.to_thread(search_engine.search, query, limit=config.inline_limit)
     results = []
+    logged_results = []
 
     for idx in meme_indices:
+        row = search_engine.row(idx)
+        source = str(row.get("source") or "")
         file_id = storage.get_file_id(idx)
+        if source == "local":
+            file_id = await ensure_cached(idx)
+        logged_results.append(build_meme_log_payload(idx))
         if file_id:
             title = html.escape(search_engine.title_for_idx(idx))[:64]
             results.append(
@@ -655,6 +683,13 @@ async def inline_search(inline_query: types.InlineQuery) -> None:
         if len(results) >= config.inline_limit:
             break
 
+    await asyncio.to_thread(
+        log_interaction_event,
+        event_type="inline_results_served",
+        user_id=user_id,
+        query=query,
+        results=logged_results,
+    )
     await inline_query.answer(results, cache_time=config.inline_cache_time, is_personal=True)
 
 
@@ -670,7 +705,7 @@ async def handle_chosen_inline_result(chosen_result: types.ChosenInlineResult) -
 
     try:
         await asyncio.to_thread(
-            log_user_selection,
+            log_interaction_event,
             event_type="inline_chosen",
             user_id=chosen_result.from_user.id,
             query=(chosen_result.query or "").strip(),
@@ -716,7 +751,7 @@ async def handle_callbacks(callback: types.CallbackQuery) -> None:
             if storage.add_favorite(user_id, meme_idx):
                 query = search_engine.search_session_query(search_session_token)
                 await asyncio.to_thread(
-                    log_user_selection,
+                    log_interaction_event,
                     event_type="favorite_selected",
                     user_id=user_id,
                     chat_id=callback.message.chat.id,

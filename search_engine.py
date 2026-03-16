@@ -200,11 +200,17 @@ class SearchEngine:
             self.clip_index = faiss.read_index(self.config.clip_index_path)
             self.clip_meta = np.load(self.config.clip_meta_path)
             self.logger.info("CLIP ready: ntotal=%s", self.clip_index.ntotal)
-        except Exception:
+        except Exception as exc:
             self.clip_vec = None
             self.clip_index = None
             self.clip_meta = None
-            self.logger.exception("Failed to load CLIP. Falling back to BM25-only mode.")
+            if os.getenv("HF_HUB_OFFLINE") == "1":
+                self.logger.warning(
+                    "Failed to load CLIP in offline mode (%s). Falling back to BM25-only mode.",
+                    exc,
+                )
+            else:
+                self.logger.exception("Failed to load CLIP. Falling back to BM25-only mode.")
 
     def _load_dataset(self) -> None:
         if os.path.exists(self.config.dataset_path):
