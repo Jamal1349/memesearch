@@ -3,7 +3,7 @@ import os
 
 from aiogram.types import BufferedInputFile
 
-from app_config import resolve_runtime_path
+from app.shared.config import get_base_dir, resolve_runtime_path
 
 PLACEHOLDER_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -13,7 +13,7 @@ PLACEHOLDER_1PX = base64.b64decode(
 def get_image_bytes(row) -> bytes:
     if isinstance(row, dict) and row.get("image_b64"):
         return base64.b64decode(row["image_b64"])
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = get_base_dir()
     data_dir = os.getenv("APP_DATA_DIR", base_dir)
     image_data = row["image"]
     if isinstance(image_data, dict) and "bytes" in image_data:

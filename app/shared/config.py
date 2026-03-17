@@ -6,7 +6,11 @@ from typing import Optional
 from dotenv import load_dotenv
 
 
-load_dotenv()
+def get_base_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+load_dotenv(os.path.join(get_base_dir(), ".env"))
 
 
 DEFAULT_CLIP_BASE_MODEL = "M-CLIP/XLM-Roberta-Large-Vit-B-32"
@@ -64,7 +68,7 @@ def resolve_runtime_path(path: str, data_dir: str, base_dir: str) -> str:
 
 
 def configure_logging() -> logging.Logger:
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = get_base_dir()
     data_dir = os.getenv("APP_DATA_DIR", base_dir)
     os.makedirs(data_dir, exist_ok=True)
     log_path = os.path.join(data_dir, "logs.log")
@@ -90,7 +94,7 @@ def load_config() -> AppConfig:
     if admin_env:
         admin_user_ids = frozenset(int(x) for x in admin_env.split(",") if x.strip())
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    base_dir = get_base_dir()
     data_dir = os.getenv("APP_DATA_DIR", base_dir)
     os.makedirs(data_dir, exist_ok=True)
     search_api_host = os.getenv("SEARCH_API_HOST", "127.0.0.1").strip() or "127.0.0.1"

@@ -3,18 +3,16 @@ import os
 import re
 from collections import Counter
 from functools import lru_cache
-from typing import Any
-from typing import Optional
 import hashlib
+
 import faiss
 import numpy as np
-from CLIP import STClipVectorizer
-
 import pandas as pd
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 
-from app_config import AppConfig
-from storage import load_json_file
+from app.ml.clip import STClipVectorizer
+from app.shared.config import AppConfig
+from app.shared.storage import load_json_file
 
 try:
     import pymorphy3

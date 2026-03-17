@@ -14,9 +14,11 @@ from transformers import (
     VisionTextDualEncoderModel,
 )
 
+from app.shared.config import get_base_dir, resolve_runtime_path
+
 
 DEFAULT_CLIP_BASE_MODEL = "M-CLIP/XLM-Roberta-Large-Vit-B-32"
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = get_base_dir()
 DEFAULT_LOCAL_FINETUNED_DIRS = [
     os.path.join(BASE_DIR, "clip_finetuned"),
     os.path.join(os.path.dirname(BASE_DIR), "clip_finetuned"),
@@ -202,17 +204,21 @@ class STClipVectorizer:
         return min(max_len, 512)
 
     def _to_pil(self, image) -> Image.Image:
+        base_dir = get_base_dir()
+        data_dir = os.getenv("APP_DATA_DIR", base_dir)
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         if isinstance(image, dict):
             if image.get("path"):
-                return Image.open(image["path"]).convert("RGB")
+                resolved_path = resolve_runtime_path(str(image["path"]), data_dir, base_dir)
+                return Image.open(resolved_path).convert("RGB")
             if image.get("bytes"):
                 from io import BytesIO
 
                 return Image.open(BytesIO(image["bytes"])).convert("RGB")
         if isinstance(image, str):
-            return Image.open(image).convert("RGB")
+            resolved_path = resolve_runtime_path(image, data_dir, base_dir)
+            return Image.open(resolved_path).convert("RGB")
         raise TypeError(f"Unsupported image type: {type(image)}")
 
     def _is_openclip_checkpoint(self, model_name: str) -> bool:

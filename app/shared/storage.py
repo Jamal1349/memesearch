@@ -3,7 +3,7 @@ import os
 import tempfile
 from typing import Any
 
-from app_config import AppConfig
+from app.shared.config import AppConfig
 
 
 def load_json_file(path: str, default: Any = None) -> Any:
