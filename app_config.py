@@ -33,6 +33,7 @@ class AppConfig:
     min_bm25_score: float
     min_clip_score: float
     min_clip_rerank_score: float
+    min_clip_fallback_score: float
     inline_limit: int = 50
     inline_cache_time: int = 30
     query_token_limit: int = 512
@@ -82,6 +83,7 @@ def load_config() -> AppConfig:
     min_bm25_score = float(os.getenv("MIN_BM25_SCORE", "4.0"))
     min_clip_score = float(os.getenv("MIN_CLIP_SCORE", "0.23"))
     min_clip_rerank_score = float(os.getenv("MIN_CLIP_RERANK_SCORE", "0.35"))
+    min_clip_fallback_score = float(os.getenv("MIN_CLIP_FALLBACK_SCORE", "0.28"))
     clip_model_path = os.getenv("CLIP_MODEL_PATH")
     if not clip_model_path:
         finetuned_candidates = [
@@ -104,6 +106,7 @@ def load_config() -> AppConfig:
         min_bm25_score=min_bm25_score,
         min_clip_score=min_clip_score,
         min_clip_rerank_score=min_clip_rerank_score,
+        min_clip_fallback_score=min_clip_fallback_score,
         clip_model_path=clip_model_path,
         clip_index_path=clip_index_path,
         clip_meta_path=clip_meta_path,

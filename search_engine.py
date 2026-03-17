@@ -1,4 +1,4 @@
-import math
+﻿import math
 import os
 import re
 from collections import Counter
@@ -439,7 +439,7 @@ class SearchEngine:
             if score >= self.config.min_bm25_score
         ][:limit]
 
-    def search_clip(self, query: str, limit: int = 10) -> list[int]:
+    def search_clip(self, query: str, limit: int = 10, min_score: float | None = None) -> list[int]:
         if self.clip_index is None or self.clip_vec is None:
             return []
 
@@ -468,18 +468,19 @@ class SearchEngine:
         ranked_candidates = sorted(best_scores.items(), key=lambda item: item[1], reverse=True)
         if not ranked_candidates:
             return []
-        if ranked_candidates[0][1] < self.config.min_clip_score:
+        threshold = self.config.min_clip_score if min_score is None else float(min_score)
+        if ranked_candidates[0][1] < threshold:
             self.logger.info(
                 "Rejecting CLIP results for query=%r: top_score=%.3f < %.3f",
                 query,
                 ranked_candidates[0][1],
-                self.config.min_clip_score,
+                threshold,
             )
             return []
 
         out: list[int] = []
         for idx, score in ranked_candidates:
-            if score < self.config.min_clip_score:
+            if score < threshold:
                 continue
             out.append(idx)
             if len(out) >= limit:
@@ -543,5 +544,6 @@ class SearchEngine:
         if lexical:
             results = self.rerank_clip_over_candidates(query, lexical, topk=limit)
         else:
-            results = self.search_clip(query, limit=limit)
+            results = self.search_clip(query, limit=limit, min_score=self.config.min_clip_fallback_score)
         return results
+
