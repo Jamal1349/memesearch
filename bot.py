@@ -23,14 +23,16 @@ from keyboards import (
     setup_main_menu,
 )
 from media_utils import create_input_file
-from search_engine import SearchEngine
+from search_client import SearchApiClient
 from storage import BotStorage
 
 
 logger = configure_logging()
 config = load_config()
+if not config.token:
+    raise RuntimeError("TELEGRAM_TOKEN не задан")
 storage = BotStorage(config)
-search_engine = SearchEngine(config, logger)
+search_api = SearchApiClient(config.search_api_url)
 
 bot = Bot(token=config.token, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
@@ -65,6 +67,10 @@ async def save_uploaded_photo(photo: types.PhotoSize) -> str:
     return target_path
 
 
+async def get_meme(idx: int) -> dict:
+    return await asyncio.to_thread(search_api.get_meme, idx)
+
+
 async def finalize_add_meme(chat_id: int, user_id: int, description: str, alt: str = "") -> None:
     state = pending_add_meme.get(user_id)
     if not state or not state.get("image_path"):
@@ -72,33 +78,23 @@ async def finalize_add_meme(chat_id: int, user_id: int, description: str, alt: s
         return
 
     image_path = state["image_path"]
-    storage.append_local_meme(image_path=image_path, description=description.strip(), alt=alt.strip())
-    idx = search_engine.add_local_meme(image_path=image_path, description=description.strip(), alt=alt.strip())
+    meme = await asyncio.to_thread(
+        search_api.add_local_meme,
+        image_path,
+        description.strip(),
+        alt.strip(),
+    )
     pending_add_meme.pop(user_id, None)
-    await send_meme(chat_id, idx, caption=f"Добавил мем #{idx}")
+    await send_meme(chat_id, int(meme["idx"]), caption=f"Добавил мем #{meme['idx']}")
 
 
 async def delete_local_meme_by_idx(chat_id: int, meme_idx: int) -> None:
-    record = search_engine.delete_local_meme(meme_idx)
-    if record is None:
+    meme = await asyncio.to_thread(search_api.delete_local_meme, meme_idx)
+    if meme is None:
         await bot.send_message(chat_id, "Only local memes can be deleted, and this id was not found.")
         return
 
-    image_info = record.get("image", {})
-    image_path = ""
-    if isinstance(image_info, dict):
-        image_path = str(image_info.get("path") or "")
-
-    if image_path:
-        storage.delete_local_meme(image_path)
     storage.purge_meme_references(meme_idx)
-
-    if image_path and os.path.exists(image_path):
-        try:
-            os.remove(image_path)
-        except Exception:
-            logger.exception("Failed to delete local meme file: %s", image_path)
-
     await bot.send_message(chat_id, f"Deleted local meme #{meme_idx}")
 
 
@@ -117,8 +113,8 @@ async def ensure_cached(idx: int) -> Optional[str]:
         return None
 
     try:
-        row = search_engine.row(idx)
-        input_file = create_input_file(row)
+        meme = await get_meme(idx)
+        input_file = create_input_file(meme)
         msg = await bot.send_photo(
             chat_id=config.cache_chat_id,
             photo=input_file,
@@ -140,7 +136,7 @@ async def warmup_cache(chat_id_for_updates: int) -> None:
     next_idx = int(state.get("next_idx", 0))
     ok = int(state.get("ok", 0))
     fail = int(state.get("fail", 0))
-    total = search_engine.total()
+    total = await asyncio.to_thread(search_api.total)
 
     await bot.send_message(
         chat_id_for_updates,
@@ -165,8 +161,8 @@ async def warmup_cache(chat_id_for_updates: int) -> None:
             continue
 
         try:
-            row = search_engine.row(idx)
-            input_file = create_input_file(row)
+            meme = await get_meme(idx)
+            input_file = create_input_file(meme)
             msg = await bot.send_photo(
                 chat_id=config.cache_chat_id,
                 photo=input_file,
@@ -204,28 +200,27 @@ async def send_meme(
     has_more: bool = False,
     caption: Optional[str] = None,
 ) -> None:
-    row = search_engine.row(idx)
-    input_file = create_input_file(row)
+    meme = await get_meme(idx)
+    input_file = create_input_file(meme)
     sent = await bot.send_photo(
         chat_id=chat_id,
         photo=input_file,
         caption=caption,
-        reply_markup=create_meme_keyboard(search_engine, idx, search_session_token, has_more=has_more),
+        reply_markup=create_meme_keyboard(idx, search_session_token, has_more=has_more),
     )
     await cache_sent_photo(idx, sent)
 
 
-def build_meme_log_payload(idx: int) -> dict:
-    row = search_engine.row(idx)
-    image_info = row.get("image", {})
+def build_meme_log_payload(idx: int, meme=None) -> dict:
+    if meme is None:
+        meme = search_api.get_meme_meta(idx)
     payload = {
-        "meme_idx": int(idx),
-        "title": search_engine.title_for_idx(idx),
+        "meme_idx": int(meme["idx"]),
+        "title": str(meme.get("title") or f"Мем #{idx}"),
     }
-    if isinstance(image_info, dict):
-        image_path = image_info.get("path")
-        if image_path:
-            payload["image_path"] = str(image_path)
+    image_path = meme.get("image_path")
+    if image_path:
+        payload["image_path"] = str(image_path)
     file_id = storage.get_file_id(idx)
     if file_id:
         payload["file_id"] = file_id
@@ -264,8 +259,8 @@ async def show_favorite_meme(chat_id: int, user_id: int, page: int = 0) -> None:
 
     page = max(0, min(page, len(user_favs) - 1))
     idx = user_favs[page]
-    row = search_engine.row(idx)
-    input_file = create_input_file(row)
+    meme = await get_meme(idx)
+    input_file = create_input_file(meme)
     await bot.send_photo(
         chat_id=chat_id,
         photo=input_file,
@@ -276,8 +271,8 @@ async def show_favorite_meme(chat_id: int, user_id: int, page: int = 0) -> None:
 
 async def send_random_meme(chat_id: int, user_id: int) -> None:
     try:
-        idx = await asyncio.to_thread(search_engine.random_idx)
-        await send_meme(chat_id, idx)
+        meme = await asyncio.to_thread(search_api.get_random_meme)
+        await send_meme(chat_id, int(meme["idx"]))
     except Exception:
         logger.exception("Ошибка отправки случайного мема")
         await bot.send_message(chat_id, "Ошибка при загрузке мема")
@@ -287,16 +282,20 @@ async def perform_search(chat_id: int, query: str, user_id: int, search_session_
     try:
         effective_query = (query or "").strip()
         if search_session_token:
-            meme_indices = await asyncio.to_thread(search_engine.next_search_results, search_session_token, user_id, 1)
-            has_more = search_engine.search_session_has_more(search_session_token)
-            effective_query = search_engine.search_session_query(search_session_token)
+            result = await asyncio.to_thread(search_api.next_search_results, search_session_token, user_id, 1)
         else:
-            search_session_token, meme_indices, has_more = await asyncio.to_thread(
-                search_engine.start_search_session,
+            result = await asyncio.to_thread(
+                search_api.start_search_session,
                 query,
                 user_id,
                 1,
             )
+            search_session_token = result["token"]
+
+        meme_indices = [int(idx) for idx in result.get("indices", [])]
+        has_more = bool(result.get("has_more"))
+        effective_query = str(result.get("query") or effective_query)
+        meme_items = list(result.get("items", []))
 
         if not meme_indices:
             await asyncio.to_thread(
@@ -320,7 +319,7 @@ async def perform_search(chat_id: int, query: str, user_id: int, search_session_
             chat_id=chat_id,
             query=effective_query,
             idx=idx,
-            results=[build_meme_log_payload(meme_idx) for meme_idx in meme_indices],
+            results=[build_meme_log_payload(int(item["idx"]), item) for item in meme_items],
         )
         await send_meme(chat_id, idx, search_session_token=search_session_token, has_more=has_more)
 
@@ -432,13 +431,14 @@ async def cmd_latest_memes(message: types.Message) -> None:
             await message.answer("РСЃРїРѕР»СЊР·СѓР№: /latestmemes 5")
             return
 
-    latest_indices = search_engine.latest_local_indices(limit)
-    if not latest_indices:
+    latest_memes = await asyncio.to_thread(search_api.latest_local_memes, limit)
+    if not latest_memes:
         await message.answer("Р›РѕРєР°Р»СЊРЅС‹С… РјРµРјРѕРІ РїРѕРєР° РЅРµС‚")
         return
 
-    await message.answer(f"РџРѕСЃР»РµРґРЅРёРµ РґРѕР±Р°РІР»РµРЅРЅС‹Рµ РјРµРјС‹: {len(latest_indices)}")
-    for idx in latest_indices:
+    await message.answer(f"РџРѕСЃР»РµРґРЅРёРµ РґРѕР±Р°РІР»РµРЅРЅС‹Рµ РјРµРјС‹: {len(latest_memes)}")
+    for meme in latest_memes:
+        idx = int(meme["idx"])
         await send_meme(message.chat.id, idx, caption=f"Р›РѕРєР°Р»СЊРЅС‹Р№ РјРµРј #{idx}")
 
 
@@ -564,9 +564,10 @@ async def cmd_warmup_status(message: types.Message) -> None:
         return
 
     state = storage.load_warmup_state()
+    total = await asyncio.to_thread(search_api.total)
     await message.answer(
         "Warmup статус:\n"
-        f"next_idx: {state.get('next_idx', 0)} / {search_engine.total()}\n"
+        f"next_idx: {state.get('next_idx', 0)} / {total}\n"
         f"ok: {state.get('ok', 0)}\n"
         f"fail: {state.get('fail', 0)}\n"
         f"cached file_ids: {len(storage.file_id_cache)}"
@@ -643,19 +644,19 @@ async def inline_search(inline_query: types.InlineQuery) -> None:
             logger.exception("Не удалось получить имя бота")
             BOT_USERNAME = None
 
-    meme_indices = await asyncio.to_thread(search_engine.search, query, limit=config.inline_limit)
+    meme_items = await asyncio.to_thread(search_api.search, query, config.inline_limit)
     results = []
     logged_results = []
 
-    for idx in meme_indices:
-        row = search_engine.row(idx)
-        source = str(row.get("source") or "")
+    for meme in meme_items:
+        idx = int(meme["idx"])
+        source = str(meme.get("source") or "")
         file_id = storage.get_file_id(idx)
         if source == "local":
             file_id = await ensure_cached(idx)
-        logged_results.append(build_meme_log_payload(idx))
+        logged_results.append(build_meme_log_payload(idx, meme))
         if file_id:
-            title = html.escape(search_engine.title_for_idx(idx))[:64]
+            title = html.escape(str(meme.get("title") or f"Мем #{idx}"))[:64]
             results.append(
                 InlineQueryResultCachedPhoto(
                     id=f"photo_{idx}",
@@ -749,7 +750,10 @@ async def handle_callbacks(callback: types.CallbackQuery) -> None:
             meme_idx = int(parts[1])
             search_session_token = parts[2] if len(parts) > 2 else ""
             if storage.add_favorite(user_id, meme_idx):
-                query = search_engine.search_session_query(search_session_token)
+                query = ""
+                if search_session_token:
+                    session = await asyncio.to_thread(search_api.get_search_session, search_session_token, user_id)
+                    query = str(session.get("query") or "")
                 await asyncio.to_thread(
                     log_interaction_event,
                     event_type="favorite_selected",
@@ -796,6 +800,7 @@ async def main() -> None:
 
     logger.info("Запуск MemeBot...")
     try:
+        await asyncio.to_thread(search_api.health)
         await bot.set_my_commands(setup_main_menu())
 
         BOT_USERNAME = (await bot.get_me()).username

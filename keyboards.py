@@ -1,11 +1,8 @@
 ﻿from aiogram import types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from search_engine import SearchEngine
-
 
 def create_meme_keyboard(
-    search_engine: SearchEngine,
     meme_idx: int,
     search_session_token: str = "",
     has_more: bool = False,

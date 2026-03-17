@@ -18,6 +18,9 @@ class AppConfig:
     cache_chat_id: Optional[int]
     base_dir: str
     data_dir: str
+    search_api_host: str
+    search_api_port: int
+    search_api_url: str
     dataset_path: str
     dataset_name: str
     dataset_split: str
@@ -42,6 +45,24 @@ class AppConfig:
     admin_user_ids: frozenset[int] = frozenset()
 
 
+def resolve_runtime_path(path: str, data_dir: str, base_dir: str) -> str:
+    candidate = (path or "").strip()
+    if not candidate:
+        return ""
+    if os.path.isabs(candidate):
+        return candidate
+
+    data_candidate = os.path.join(data_dir, candidate)
+    if os.path.exists(data_candidate):
+        return data_candidate
+
+    base_candidate = os.path.join(base_dir, candidate)
+    if os.path.exists(base_candidate):
+        return base_candidate
+
+    return data_candidate
+
+
 def configure_logging() -> logging.Logger:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.getenv("APP_DATA_DIR", base_dir)
@@ -59,9 +80,7 @@ def configure_logging() -> logging.Logger:
 
 
 def load_config() -> AppConfig:
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token:
-        raise RuntimeError("TELEGRAM_TOKEN не задан")
+    token = os.getenv("TELEGRAM_TOKEN", "").strip()
 
     cache_chat_id_env = os.getenv("CACHE_CHAT_ID")
     cache_chat_id = int(cache_chat_id_env) if cache_chat_id_env else None
@@ -74,6 +93,9 @@ def load_config() -> AppConfig:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.getenv("APP_DATA_DIR", base_dir)
     os.makedirs(data_dir, exist_ok=True)
+    search_api_host = os.getenv("SEARCH_API_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    search_api_port = int(os.getenv("SEARCH_API_PORT", "8080"))
+    search_api_url = os.getenv("SEARCH_API_URL", f"http://127.0.0.1:{search_api_port}").rstrip("/")
     default_dataset_path = os.path.join(base_dir, "meme_enriched")
     if not os.path.exists(default_dataset_path):
         default_dataset_path = os.path.join(base_dir, "dataset_splits")
@@ -100,6 +122,9 @@ def load_config() -> AppConfig:
         cache_chat_id=cache_chat_id,
         base_dir=base_dir,
         data_dir=data_dir,
+        search_api_host=search_api_host,
+        search_api_port=search_api_port,
+        search_api_url=search_api_url,
         dataset_path=dataset_path,
         dataset_name=dataset_name,
         dataset_split=dataset_split,

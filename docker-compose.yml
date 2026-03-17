@@ -1,13 +1,39 @@
 services:
+  memeapi:
+    build:
+      context: .
+    container_name: memeapi
+    restart: unless-stopped
+    command: ["python", "search_api.py"]
+    env_file:
+      - .env
+    environment:
+      APP_DATA_DIR: /data
+      SEARCH_API_HOST: 0.0.0.0
+      SEARCH_API_PORT: 8080
+      HF_HOME: /data/.cache/huggingface
+      TRANSFORMERS_CACHE: /data/.cache/huggingface/transformers
+      DATASET_PATH: ${DATASET_PATH:-/artifacts/meme_enriched}
+      CLIP_MODEL_PATH: ${CLIP_MODEL_PATH:-/artifacts/clip_finetuned}
+      CLIP_INDEX_PATH: ${CLIP_INDEX_PATH:-/artifacts/clip.index}
+      CLIP_META_PATH: ${CLIP_META_PATH:-/artifacts/clip_meta.npy}
+    volumes:
+      - ./data:/data
+      - ./artifacts:/artifacts
+
   memebot:
     build:
       context: .
     container_name: memebot
     restart: unless-stopped
+    command: ["python", "bot.py"]
+    depends_on:
+      - memeapi
     env_file:
       - .env
     environment:
       APP_DATA_DIR: /data
+      SEARCH_API_URL: http://memeapi:8080
       HF_HOME: /data/.cache/huggingface
       TRANSFORMERS_CACHE: /data/.cache/huggingface/transformers
       DATASET_PATH: ${DATASET_PATH:-/artifacts/meme_enriched}
