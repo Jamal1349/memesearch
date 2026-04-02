@@ -13,7 +13,7 @@ from CLIP import STClipVectorizer
 import pandas as pd
 from datasets import DatasetDict, concatenate_datasets, load_dataset, load_from_disk
 
-from app_config import AppConfig
+from app_config import AppConfig, DEFAULT_CLIP_BASE_MODEL
 from storage import load_json_file
 
 try:
@@ -184,6 +184,22 @@ class SearchEngine:
         self._load_dataset()
         self._init_text_search()
 
+    def _clip_model_candidates(self) -> list[str]:
+        primary = (self.config.clip_model_path or "").strip()
+        fallback = (os.getenv("CLIP_FALLBACK_MODEL") or os.getenv("CLIP_BASE_MODEL") or DEFAULT_CLIP_BASE_MODEL).strip()
+
+        candidates: list[str] = []
+        for candidate in (primary, fallback):
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+        return candidates
+
+    def _embedding_dim(self, vectorizer: STClipVectorizer) -> int:
+        probe = vectorizer.encode_text("meme", normalize=True)
+        if not isinstance(probe, np.ndarray) or probe.ndim != 2 or probe.shape[0] < 1:
+            raise RuntimeError(f"Unexpected embedding shape from model '{vectorizer.model_name}': {getattr(probe, 'shape', None)}")
+        return int(probe.shape[1])
+
     def _load_clip(self) -> None:
         self.logger.info(
             "CLIP paths: model=%s index=%s meta=%s",
@@ -196,10 +212,29 @@ class SearchEngine:
             return
 
         try:
-            self.clip_vec = STClipVectorizer(model_name=self.config.clip_model_path)
             self.clip_index = faiss.read_index(self.config.clip_index_path)
             self.clip_meta = np.load(self.config.clip_meta_path)
-            self.logger.info("CLIP ready: ntotal=%s", self.clip_index.ntotal)
+            model_candidates = self._clip_model_candidates()
+            if not model_candidates:
+                raise RuntimeError("No CLIP model candidate configured")
+
+            for model_name in model_candidates:
+                try:
+                    vectorizer = STClipVectorizer(model_name=model_name)
+                    vector_dim = self._embedding_dim(vectorizer)
+                    index_dim = int(getattr(self.clip_index, "d", 0))
+                    if index_dim > 0 and vector_dim != index_dim:
+                        raise RuntimeError(
+                            f"Embedding dim mismatch for model '{model_name}': vector_dim={vector_dim}, index_dim={index_dim}"
+                        )
+                    self.clip_vec = vectorizer
+                    self.logger.info("CLIP ready: ntotal=%s model=%s dim=%s", self.clip_index.ntotal, model_name, vector_dim)
+                    break
+                except Exception as candidate_exc:
+                    self.logger.warning("CLIP candidate '%s' failed: %s", model_name, candidate_exc)
+
+            if self.clip_vec is None:
+                raise RuntimeError("All CLIP model candidates failed")
         except Exception as exc:
             self.clip_vec = None
             self.clip_index = None
@@ -521,7 +556,7 @@ class SearchEngine:
 
         top_score = max(best_scores.values())
         if top_score < self.config.min_clip_rerank_score:
-            self.logger.info(
+            self.logger.debug(
                 "Skipping CLIP rerank for query=%r: top_candidate_score=%.3f < %.3f",
                 query,
                 top_score,

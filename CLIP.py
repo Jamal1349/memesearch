@@ -221,6 +221,37 @@ class STClipVectorizer:
         lower_path = str(model_name).lower()
         return os.path.isfile(model_name) and lower_path.endswith(OPENCLIP_CHECKPOINT_EXTENSIONS)
 
+    def _openclip_arch_candidates(self, arch: str) -> list[str]:
+        base = (arch or "").strip()
+        if not base:
+            return []
+
+        variants = [
+            base,
+            base.replace("-Vit-", "-ViT-"),
+            base.replace("-ViT-", "-Vit-"),
+            base.replace("roberta-base", "roberta-large"),
+            base.replace("roberta-large", "roberta-base"),
+        ]
+
+        expanded: list[str] = []
+        for item in variants:
+            if item:
+                expanded.append(item)
+                if not item.endswith("-quickgelu"):
+                    expanded.append(item + "-quickgelu")
+                else:
+                    expanded.append(item.replace("-quickgelu", ""))
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in expanded:
+            key = item.strip()
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(key)
+        return unique
+
     def _load_openclip_checkpoint(self, checkpoint_path: str) -> None:
         try:
             import open_clip
@@ -232,17 +263,38 @@ class STClipVectorizer:
 
         arch = os.getenv("OPENCLIP_ARCH", DEFAULT_OPENCLIP_ARCH)
         pretrained = os.getenv("OPENCLIP_PRETRAINED", DEFAULT_OPENCLIP_PRETRAINED)
+        arch_candidates = self._openclip_arch_candidates(arch)
         try:
-            self.model, _, self.openclip_preprocess = open_clip.create_model_and_transforms(
-                arch,
-                pretrained=None,
-            )
-        except Exception as exc:
+            available_models = {name.lower(): name for name in open_clip.list_models()}
+        except Exception:
+            available_models = {}
+        if available_models:
+            normalized_candidates: list[str] = []
+            for candidate_arch in arch_candidates:
+                normalized = available_models.get(candidate_arch.lower())
+                if normalized and normalized not in normalized_candidates:
+                    normalized_candidates.append(normalized)
+            if normalized_candidates:
+                arch_candidates = normalized_candidates
+
+        last_exc = None
+        selected_arch = ""
+        for candidate_arch in arch_candidates:
+            try:
+                self.model, _, self.openclip_preprocess = open_clip.create_model_and_transforms(
+                    candidate_arch,
+                    pretrained=None,
+                )
+                self.openclip_tokenizer = open_clip.get_tokenizer(candidate_arch)
+                selected_arch = candidate_arch
+                break
+            except Exception as exc:
+                last_exc = exc
+        if not selected_arch:
             raise RuntimeError(
-                f"Failed to initialize OpenCLIP architecture '{arch}' for local checkpoint '{checkpoint_path}'. "
-                "Set OPENCLIP_ARCH to the architecture used during training."
-            ) from exc
-        self.openclip_tokenizer = open_clip.get_tokenizer(arch)
+                f"Failed to initialize OpenCLIP architecture for local checkpoint '{checkpoint_path}'. "
+                f"Tried: {', '.join(arch_candidates)}. Set OPENCLIP_ARCH to the architecture used during training."
+            ) from last_exc
         self.model = self.model.to(self.device)
 
         checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -263,7 +315,7 @@ class STClipVectorizer:
         unexpected_keys = getattr(incompatible, "unexpected_keys", [])
         if missing_keys and unexpected_keys:
             raise RuntimeError(
-                f"Checkpoint '{checkpoint_path}' is incompatible with OPENCLIP_ARCH='{arch}'. "
+                f"Checkpoint '{checkpoint_path}' is incompatible with OPENCLIP_ARCH='{selected_arch}'. "
                 f"Missing keys: {len(missing_keys)}, unexpected keys: {len(unexpected_keys)}. "
                 f"If this checkpoint expects pretrained base weights, set OPENCLIP_PRETRAINED='{pretrained}' "
                 "and ensure those weights are available locally."
