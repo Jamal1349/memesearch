@@ -57,6 +57,40 @@ def parse_target_user_id(raw: str) -> int | None:
         return None
 
 
+def is_forwarded_message(message: types.Message) -> bool:
+    return bool(
+        getattr(message, "forward_origin", None)
+        or getattr(message, "forward_from", None)
+        or getattr(message, "forward_from_chat", None)
+        or getattr(message, "forward_sender_name", None)
+        or getattr(message, "forward_date", None)
+    )
+
+
+async def try_add_forwarded_meme_to_favorites(message: types.Message, file_id: str) -> bool:
+    if not is_forwarded_message(message):
+        return False
+
+    meme_idx = storage.find_meme_idx_by_file_id(file_id)
+    if meme_idx is None:
+        await message.answer("Не смог определить мем. Перешли мем, который был отправлен этим ботом.")
+        return True
+
+    user_id = message.from_user.id
+    if storage.add_favorite(user_id, meme_idx):
+        await asyncio.to_thread(
+            log_interaction_event,
+            event_type="forward_favorite_selected",
+            user_id=user_id,
+            chat_id=message.chat.id,
+            idx=meme_idx,
+        )
+        await message.answer("Добавлено в избранное")
+    else:
+        await message.answer("Уже в избранном")
+    return True
+
+
 async def save_uploaded_photo(photo: types.PhotoSize) -> str:
     os.makedirs(config.local_images_dir, exist_ok=True)
     target_path = os.path.join(config.local_images_dir, f"user_{uuid.uuid4().hex}.jpg")
@@ -580,6 +614,7 @@ async def handle_photo(message: types.Message) -> None:
     user_id = message.from_user.id
     state = pending_add_meme.get(user_id)
     if state is None:
+        await try_add_forwarded_meme_to_favorites(message, message.photo[-1].file_id)
         return
     try:
         image_path = await save_uploaded_photo(message.photo[-1])
@@ -595,6 +630,20 @@ async def handle_photo(message: types.Message) -> None:
         return
 
     await message.answer("Фото получил. Теперь отправь подпись или описание для поиска.")
+
+
+@dp.message(lambda message: bool(message.document))
+async def handle_document(message: types.Message) -> None:
+    if is_blocked(message.from_user.id):
+        return
+
+    user_id = message.from_user.id
+    state = pending_add_meme.get(user_id)
+    if state is not None and state.get("step") == "awaiting_photo":
+        await message.answer("Сейчас жду фото мема. Отправь фото, а не файл, или /cancel.")
+        return
+
+    await try_add_forwarded_meme_to_favorites(message, message.document.file_id)
 
 
 @dp.message()

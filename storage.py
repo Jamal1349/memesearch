@@ -74,6 +74,18 @@ class BotStorage:
         self.file_id_cache[str(meme_idx)] = file_id
         save_json_file(self.config.file_ids_path, self.file_id_cache)
 
+    def find_meme_idx_by_file_id(self, file_id: str) -> int | None:
+        target = (file_id or "").strip()
+        if not target:
+            return None
+        for meme_idx_str, cached_file_id in self.file_id_cache.items():
+            if cached_file_id == target:
+                try:
+                    return int(meme_idx_str)
+                except ValueError:
+                    continue
+        return None
+
     def delete_file_id(self, meme_idx: int) -> None:
         if str(meme_idx) in self.file_id_cache:
             self.file_id_cache.pop(str(meme_idx), None)
